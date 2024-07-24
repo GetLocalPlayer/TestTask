@@ -1,43 +1,37 @@
 from typing import Any
 from command_listener import CommandListener
 from book import Book
+from book_storage import BookStorage
 
 
-db = []
-filepath = "db"
+FILEPATH = "db"
+
+# Commands (command, description)
+CMD_ADD = "add", "adds a book to the database with unique ID."
+CMD_DELETE = "delete", "deletes a book with the given Id from the database."
+CMD_FIND = "find", "finds a book by the given title, author, or year of publication."
+CMD_FIND_BY_YEAR = "find_year", "find a book by the given year the book was published in."
+CMD_FIND_BY_AUTHOR = "find_author", "find a book by the given author."
+CMD_FIND_BY_TITLE = "find_title", "find a book by the given title."
+CMD_CLOSE = "close", "closes the application."
+CMD_SHOW_ALL = "show_all", "shows all books currenly recorded in the library."
+CMD_CHANGE_STATUS = "change_status", "changes the status of the book from \"available\" to \"checked out\" and vice versa"
+
+# Errors
+ERR_INCORRECT_ID = "Error: incorrect ID,"
+ERR_INCORRECT_YEAR = "Error: incorrect year."
+
+# Messages
+MSG_NO_BOOK_FOUND = "No book found."
+MSG_NO_BOOK_EXISTS = "No book exists in the library."
+MSG_STATUS_CHANGED = "Book status changed"
+
+
 cmd = CommandListener()
+storage = BookStorage(FILEPATH)
 
 
-def save_to_disc() -> None:
-    """Converts each book's data into a string where each field
-    value is separated by new line and saves it to a text file."""
-    with open(filepath, "w") as f:
-        for b in db:
-            nl = '\n'
-            s = f"{nl if f.tell() else ''}{b.id}{nl}{b.title}{nl}{b.author}{nl}{b.year_published}{nl}{int(b.available)}"
-            f.write(s)
-
-
-def load_from_disc() -> None:
-    """Loads the database file from the disc, converting its text
-    into Book instances following the pattern it was saved with
-    in `save_to_disc()` fu
-    nciton. """
-    try:
-        with open(filepath, "r") as f:
-            data = f.read().splitlines()
-            for i in range(0, len(data), 5):
-                id, title, author, year, available = data[i: i + 5]
-                b = Book(int(id), title, author, int(year))
-                b.available = bool(int(available))
-                db.append(b)
-    except FileNotFoundError:
-        print("No database file found. Another will be created.")
-    except ValueError:
-        print("Error: cannot read the database file format. Another will be created.")
-
-
-@cmd.register_command("add", "adds a book to the database with unique ID.")
+@cmd.register_command(CMD_ADD[0], CMD_ADD[1])
 def add(args: str) -> None:
     print("Enter the book's title > ", end="")
     title = input()
@@ -47,30 +41,30 @@ def add(args: str) -> None:
     try:
         year = int(input())
     except ValueError:
-        print("Error: incorrect year.")
+        print(ERR_INCORRECT_YEAR)
     else:
-        b = Book(0 if not db else db[-1].id + 1, title, author, year)
-        db.append(b)
-        print("A book has been added in the library:")
+        b = Book(title, author, year)
+        id = storage.add(b)
+        print("The book has been added in the library with id: %d\n    " % id, end="")
         b.print()
     print()
 
 
 def find_by_field(field: str, value: Any) -> None:
     """Finds a book dependin on the passed field name and its value."""
-    books = [elem for elem in db if elem.__dict__[field] == value]
+    books = storage.find(lambda id, b : b.__dict__[field] == value)
     if not books:
-        print("No book found.")
+        print(MSG_NO_BOOK_FOUND)
     else:
-        print(f"Found {len(books)} book{'s' if books else ''}:")
-        for b in books:
-            print(f"    ", end="")
+        print("Found %d book%s:" % (len(books), "s" if len(books) > 0 else ""))
+        for id, b in sorted(books.items()):
+            print("    [id: %d]" % id, end="")
             b.print()
         print()
     return books
     
 
-@cmd.register_command("find_author", "find a book by the given author.")
+@cmd.register_command(CMD_FIND_BY_AUTHOR[0], CMD_FIND_BY_AUTHOR[1])
 def find_by_author(args: str) -> None:
     if not args:
         print("Enter the book's author.")
@@ -78,7 +72,7 @@ def find_by_author(args: str) -> None:
     find_by_field("author", args.strip())
 
 
-@cmd.register_command("find_title", "find a book by the given title.")
+@cmd.register_command(CMD_FIND_BY_TITLE[0], CMD_FIND_BY_TITLE[1])
 def find_by_title(args: str) -> None:
     if not args:
         print("Enter the book's title.")
@@ -86,7 +80,7 @@ def find_by_title(args: str) -> None:
     find_by_field("title", args.strip())
 
 
-@cmd.register_command("find_year", "find a book by the given year the book was published in.")
+@cmd.register_command(CMD_FIND_BY_YEAR[0], CMD_FIND_BY_YEAR[1])
 def find_by_year(args: str) -> None:
     if not args:
         print("Enter the year when the book was published.")
@@ -94,12 +88,12 @@ def find_by_year(args: str) -> None:
     try:
         y = int(args)
     except ValueError:
-        print("Error: incorrect year given.")
+        print(ERR_INCORRECT_YEAR)
     else:
         find_by_field("year_published", y)
 
 
-@cmd.register_command("find", "finds a book by the given title, author, or year of publication.")
+@cmd.register_command(CMD_FIND[0], CMD_FIND[1])
 def find(args: str) -> None:
     if not args:
         print("Enter the title, the author's name, or the year when the book was published.")
@@ -113,7 +107,7 @@ def find(args: str) -> None:
         find_by_year(args)
 
 
-@cmd.register_command("delete", "deletes a book with the given Id from the database.")
+@cmd.register_command(CMD_DELETE[0], CMD_DELETE[1])
 def delete(args: str) -> None:
     if not args:
         print("Enter a valid Id.")
@@ -121,56 +115,54 @@ def delete(args: str) -> None:
     try:
         id = int(args)
     except ValueError:
-        print("Error: incorrect Id")
+        print(ERR_INCORRECT_ID)
         return
-    try:
-        b: Book = next(elem for elem in db if elem.id == id)
-    except StopIteration:
-        print(f"No book found with Id {id}")
-    else:
-        db.remove(b)
-        print(f"    Book deleted:\n    ", end="")
+    b: Book = storage.pop(id)
+    if b:
+        print(f"Book deleted:\n    ", end="")
         b.print()
+    else:
+        print(MSG_NO_BOOK_FOUND)
 
 
-@cmd.register_command("change_status", "changes the status of the book from \"available\" to \"checked out\" and vice versa")
+@cmd.register_command(CMD_CHANGE_STATUS[0], CMD_CHANGE_STATUS[1])
 def change_status(args: str) -> None:
     try:
         id = int(args)
     except ValueError:
-        print("Error: incorrect Id")
+        print(ERR_INCORRECT_ID)
         return 
-    try:
-        b: Book = next(elem for elem in db if elem.id == id)
-    except StopIteration:
-        print(f"No book found with Id {id}")
-    else:
+    b: Book = storage.get(id)
+    if b:
         b.available = not b.available
-        print(f"Book status changed: \"{b.title}\"\n    Written by {b.author}\n    Published in {b.year_published}")
-        print(f"""    New status: {"available" if b.available else "checked out"}""")
+        print("%s\n    " % MSG_STATUS_CHANGED, end="")
+        b.print()
+    else:
+        print(MSG_NO_BOOK_FOUND)
 
 
-@cmd.register_command("show_all", "shows all books currenly recorded in the library.")
+@cmd.register_command(CMD_SHOW_ALL[0], CMD_SHOW_ALL[1])
 def show_all(args: str) -> None:
-    if not db:
-        print("No book exists in the library.")
-    for b in db:
-        print("    ")
-        b.print(end="")
+    ids = list(storage)
+    if not ids:
+        print(MSG_NO_BOOK_EXISTS)
+        return
+    for id in ids:
+        print("    [id: %d]" % (id), end="")
+        storage.get(id).print()
     print("\n")
 
 
-@cmd.register_command("close", "closes the application.")
+@cmd.register_command(CMD_CLOSE[0], CMD_CLOSE[1])
 def close(args: str) -> None:
     cmd.stop()
 
 
-
 if __name__ == "__main__":
-    load_from_disc()
     print("************* Welcome to the library *************")
+    storage.load_from_disc()
     print("Enter your command or type `help` to see the list of available commands.")
     cmd.run()
-    save_to_disc()
+    storage.save_to_disc()
     print("The session is over.")
     print()
